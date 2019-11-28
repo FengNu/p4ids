@@ -1,0 +1,131 @@
+{
+  "target": "bmv2",
+  "p4info": "build/basic.p4info",
+  "bmv2_json": "build/basic.json",
+  "table_entries": [
+    {
+      "table": "MyIngress.ipv4_lpm",
+      "default_action": true,
+      "action_name": "MyIngress.drop",
+      "action_params": { }
+    },
+    {
+      "table": "MyIngress.ipv4_lpm",
+      "match": {
+        "hdr.ipv4.dstAddr": ["10.0.4.2", 32]
+      },
+      "action_name": "MyIngress.ipv4_forward",
+      "action_params": {
+        "dstAddr": "00:50:79:66:68:03",
+        "port": 2
+      }
+    },
+    {
+      "table": "MyIngress.ipv4_lpm",
+      "match": {
+        "hdr.ipv4.dstAddr": ["10.0.3.0", 24]
+      },
+      "action_name": "MyIngress.ipv4_forward",
+      "action_params": {
+        "dstAddr": "00:0c:29:7c:f9:01",
+        "port": 1
+      }
+    },
+    {
+      "table": "MyIngress.ipv4_lpm",
+      "match": {
+        "hdr.ipv4.dstAddr": ["10.0.2.0", 24]
+      },
+      "action_name": "MyIngress.ipv4_forward",
+      "action_params": {
+        "dstAddr": "00:0c:29:7c:f9:01",
+        "port": 1
+      }
+    },
+    {
+      "table": "MyIngress.ipv4_lpm",
+      "match": {
+        "hdr.ipv4.dstAddr": ["10.0.1.0", 24]
+      },
+      "action_name": "MyIngress.ipv4_forward",
+      "action_params": {
+        "dstAddr": "00:0c:29:7c:f9:01",
+        "port": 1
+      }
+    },
+    {
+      "table": "MyIngress.ipv4_lpm",
+      "match": {
+        "hdr.ipv4.dstAddr": ["10.0.5.0", 24]
+      },
+      "action_name": "MyIngress.ipv4_forward",
+      "action_params": {
+        "dstAddr": "00:0c:29:16:ae:76",
+        "port": 3
+      }
+    },
+    {
+      "table": "MyIngress.ipv4_lpm",
+      "match": {
+        "hdr.ipv4.dstAddr": ["10.0.6.0", 24]
+      },
+      "action_name": "MyIngress.ipv4_forward",
+      "action_params": {
+        "dstAddr": "00:0c:29:16:ae:76",
+        "port": 3
+      }
+    },
+    {
+      "table": "MyIngress.port_mac",
+      "default_action": true,
+      "action_name": "MyIngress.drop",
+      "action_params": { }
+    },
+    {
+      "table": "MyIngress.port_mac",
+      "match": {
+        "standard_metadata.egress_spec": [1]
+      },
+      "action_name": "MyIngress.set_smac",
+      "action_params": {
+        "portMacAddr": "00:0c:29:1a:08:89"
+      }
+    },
+    {
+      "table": "MyIngress.port_mac",
+      "match": {
+        "standard_metadata.egress_spec": [2]
+      },
+      "action_name": "MyIngress.set_smac",
+      "action_params": {
+        "portMacAddr": "00:0c:29:1a:08:93"
+      }
+    },
+    {
+      "table": "MyIngress.port_mac",
+      "match": {
+        "standard_metadata.egress_spec": [3]
+      },
+      "action_name": "MyIngress.set_smac",
+      "action_params": {
+        "portMacAddr": "00:0c:29:1a:08:9d"
+      }
+    },
+
+    {
+      "table": "MyIngress.arp_response_table",
+      "default_action": "true",
+      "action_name": "drop",
+      "action_params": {  }
+    },
+
+    {
+      "table": "MyIngress.arp_response_table",
+      "match": {
+        "hdr.arp.targetIpAddr": ["10.0.4.1"]
+      },
+      "action_name": "MyIngress.arp_response",
+      "action_params": {  }
+    }
+  ]
+}
