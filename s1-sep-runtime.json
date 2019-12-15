@@ -1,0 +1,58 @@
+{
+  "target": "bmv2",
+  "p4info": "build/basic.p4info",
+  "bmv2_json": "build/basic.json",
+  "table_entries": [
+    {
+      "table": "ingress.port_mac",
+      "default_action": true,
+      "action_name": "ingress.drop",
+      "action_params": { }
+    },
+    {
+      "table": "ingress.port_mac",
+      "match": {
+        "standard_metadata.egress_spec": [1]
+      },
+      "action_name": "ingress.set_smac",
+      "action_params": {
+        "portMacAddr": "00:0c:29:7c:f9:ed"
+      }
+    },
+    {
+      "table": "ingress.port_mac",
+      "match": {
+        "standard_metadata.egress_spec": [2]
+      },
+      "action_name": "ingress.set_smac",
+      "action_params": {
+        "portMacAddr": "00:0c:29:7c:f9:f7"
+      }
+    },
+    {
+      "table": "ingress.port_mac",
+      "match": {
+        "standard_metadata.egress_spec": [3]
+      },
+      "action_name": "ingress.set_smac",
+      "action_params": {
+        "portMacAddr": "00:0c:29:7c:f9:01"
+      }
+    },
+    {
+      "table": "ingress.arp_response_table",
+      "default_action": "true",
+      "action_name": "ingress.drop",
+      "action_params": {  }
+    },
+    {
+      "table": "ingress.arp_response_table",
+      "match": {
+        "hdr.arp.targetIpAddr": ["10.0.1.1"]
+      },
+      "action_name": "ingress.arp_response",
+      "action_params": {  }
+    }
+
+  ]
+}
