@@ -165,6 +165,7 @@ control ingress(inout headers hdr,
                   inout standard_metadata_t standard_metadata) {
 
     action arp_response() {
+        log_msg("send arp_response");
         ip4Addr_t temp;
         // send back to the ingress port
         standard_metadata.egress_spec = standard_metadata.ingress_port;
@@ -200,8 +201,11 @@ control ingress(inout headers hdr,
             drop;
             NoAction;
         }
-        size = 1024;
+        //size = 1024;
         default_action = drop();
+        const entries = {
+            (0x0a000101) : arp_response();
+        }
     }
 
 
@@ -220,6 +224,7 @@ control ingress(inout headers hdr,
 
         default_action = drop();
         size = 1024;
+
     }
 
     apply {
@@ -235,7 +240,8 @@ control ingress(inout headers hdr,
             // meta.sep = SEP_IP; // port 3
             // standard_metadata.egress_spec = meta.sep;
             // NoAction();
-          if(standard_metadata.instance_type == PKT_INSTANCE_TYPE_NORMAL) {
+          if(hdr.ipv4.srcAddr == 0x0a000102 && hdr.ipv4.protocol == 1 && standard_metadata.instance_type == PKT_INSTANCE_TYPE_NORMAL) {
+              log_msg("clone 10.0.1.2's icmp packet in ingress");
               clone(CloneType.I2E, (bit<32>)SEP_IP);
           } else {
               standard_metadata.egress_spec = 0x02;
@@ -252,11 +258,12 @@ control egress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
     apply {
-          log_msg("test");
-          if(standard_metadata.instance_type != PKT_INSTANCE_TYPE_NORMAL) {
-              standard_metadata.egress_spec = 0x02;
-          }else{
-              mark_to_drop(standard_metadata);
+          //log_msg("packet type ={}", standard_metadata.instance_type);
+          if(hdr.ipv4.srcAddr == 0x0a000102 && hdr.ipv4.protocol == 1 && standard_metadata.instance_type != 0) {
+              log_msg("egress clone packet: standard_metadata.egress_spec = 0x02;");
+              // standard_metadata.egress_spec = 0x02;
+          }else if (hdr.ipv4.srcAddr == 0x0a000102 && hdr.ipv4.protocol == 1){
+              log_msg("egress normal packet:  standard_metadata.egress_spec = 0x03;");
           }
 //        standard_metadata.egress_spec = 0x02;
        //if(meta.sep>=1){

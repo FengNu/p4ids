@@ -345,7 +345,7 @@
       "id" : 0,
       "source_info" : {
         "filename" : "basic-seperate.p4",
-        "line" : 296,
+        "line" : 303,
         "column" : 8,
         "source_fragment" : "MyDeparser"
       },
@@ -362,7 +362,7 @@
       "id" : 0,
       "source_info" : {
         "filename" : "basic-seperate.p4",
-        "line" : 274,
+        "line" : 281,
         "column" : 1,
         "source_fragment" : "update_checksum( ..."
       },
@@ -435,6 +435,26 @@
       "runtime_data" : [],
       "primitives" : [
         {
+          "op" : "log_msg",
+          "parameters" : [
+            {
+              "type" : "string",
+              "value" : "send arp_response"
+            },
+            {
+              "type" : "parameters_vector",
+              "value" : {
+              }
+            }
+          ],
+          "source_info" : {
+            "filename" : "basic-seperate.p4",
+            "line" : 168,
+            "column" : 8,
+            "source_fragment" : "        log_msg(\\\"send arp_response\\\");"
+          }
+        },
+        {
           "op" : "assign",
           "parameters" : [
             {
@@ -448,7 +468,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 170,
+            "line" : 171,
             "column" : 8,
             "source_fragment" : "standard_metadata.egress_spec = standard_metadata.ingress_port"
           }
@@ -486,7 +506,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 174,
+            "line" : 175,
             "column" : 8,
             "source_fragment" : "hdr.ethernet.dstAddr = hdr.ethernet.srcAddr"
           }
@@ -505,7 +525,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 176,
+            "line" : 177,
             "column" : 8,
             "source_fragment" : "hdr.arp.targetMacAddr = hdr.arp.senderMacAddr"
           }
@@ -524,7 +544,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 177,
+            "line" : 178,
             "column" : 8,
             "source_fragment" : "temp = hdr.arp.targetIpAddr"
           }
@@ -543,7 +563,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 178,
+            "line" : 179,
             "column" : 8,
             "source_fragment" : "hdr.arp.targetIpAddr = hdr.arp.senderIpAddr"
           }
@@ -562,7 +582,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 179,
+            "line" : 180,
             "column" : 8,
             "source_fragment" : "hdr.arp.senderIpAddr = temp"
           }
@@ -584,7 +604,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 183,
+            "line" : 184,
             "column" : 8,
             "source_fragment" : "mark_to_drop(standard_metadata)"
           }
@@ -606,7 +626,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 183,
+            "line" : 184,
             "column" : 8,
             "source_fragment" : "mark_to_drop(standard_metadata)"
           }
@@ -637,7 +657,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 187,
+            "line" : 188,
             "column" : 8,
             "source_fragment" : "hdr.ethernet.srcAddr = portMacAddr"
           }
@@ -683,7 +703,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 189,
+            "line" : 190,
             "column" : 12,
             "source_fragment" : "hdr.arp.senderMacAddr ="
           }
@@ -691,10 +711,30 @@
       ]
     },
     {
-      "name" : "basicseperate239",
+      "name" : "basicseperate244",
       "id" : 6,
       "runtime_data" : [],
       "primitives" : [
+        {
+          "op" : "log_msg",
+          "parameters" : [
+            {
+              "type" : "string",
+              "value" : "clone 10.0.1.2's icmp packet in ingress"
+            },
+            {
+              "type" : "parameters_vector",
+              "value" : {
+              }
+            }
+          ],
+          "source_info" : {
+            "filename" : "basic-seperate.p4",
+            "line" : 244,
+            "column" : 14,
+            "source_fragment" : "              log_msg(\\\"clone 10.0.1.2's icmp packet in ingress\\\");"
+          }
+        },
         {
           "op" : "clone_ingress_pkt_to_egress",
           "parameters" : [
@@ -709,7 +749,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 239,
+            "line" : 245,
             "column" : 14,
             "source_fragment" : "clone(CloneType.I2E, (bit<32>)SEP_IP)"
           }
@@ -717,7 +757,7 @@
       ]
     },
     {
-      "name" : "basicseperate241",
+      "name" : "basicseperate247",
       "id" : 7,
       "runtime_data" : [],
       "primitives" : [
@@ -735,7 +775,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 241,
+            "line" : 247,
             "column" : 14,
             "source_fragment" : "standard_metadata.egress_spec = 0x02"
           }
@@ -743,10 +783,30 @@
       ]
     },
     {
-      "name" : "basicseperate257",
+      "name" : "basicseperate263",
       "id" : 8,
       "runtime_data" : [],
       "primitives" : [
+        {
+          "op" : "log_msg",
+          "parameters" : [
+            {
+              "type" : "string",
+              "value" : "egress clone packet: standard_metadata.egress_spec = 0x02;"
+            },
+            {
+              "type" : "parameters_vector",
+              "value" : {
+              }
+            }
+          ],
+          "source_info" : {
+            "filename" : "basic-seperate.p4",
+            "line" : 263,
+            "column" : 14,
+            "source_fragment" : "              log_msg(\\\"egress clone packet: standard_metadata.egress_spec = 0x02;\\\");"
+          }
+        },
         {
           "op" : "assign",
           "parameters" : [
@@ -761,7 +821,7 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 257,
+            "line" : 264,
             "column" : 14,
             "source_fragment" : "standard_metadata.egress_spec = 0x02"
           }
@@ -769,30 +829,8 @@
       ]
     },
     {
-      "name" : "basicseperate259",
+      "name" : "basicseperate266",
       "id" : 9,
-      "runtime_data" : [],
-      "primitives" : [
-        {
-          "op" : "mark_to_drop",
-          "parameters" : [
-            {
-              "type" : "header",
-              "value" : "standard_metadata"
-            }
-          ],
-          "source_info" : {
-            "filename" : "basic-seperate.p4",
-            "line" : 259,
-            "column" : 14,
-            "source_fragment" : "mark_to_drop(standard_metadata)"
-          }
-        }
-      ]
-    },
-    {
-      "name" : "basicseperate255",
-      "id" : 10,
       "runtime_data" : [],
       "primitives" : [
         {
@@ -800,7 +838,7 @@
           "parameters" : [
             {
               "type" : "string",
-              "value" : "test"
+              "value" : "egress normal packet:  standard_metadata.egress_spec = 0x03;"
             },
             {
               "type" : "parameters_vector",
@@ -810,9 +848,9 @@
           ],
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 255,
-            "column" : 10,
-            "source_fragment" : "          log_msg(\\\"test\\\");"
+            "line" : 266,
+            "column" : 14,
+            "source_fragment" : "              log_msg(\\\"egress normal packet:  standard_metadata.egress_spec = 0x03;\\\");"
           }
         }
       ]
@@ -835,7 +873,7 @@
           "id" : 0,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 194,
+            "line" : 195,
             "column" : 10,
             "source_fragment" : "arp_response_table"
           },
@@ -866,14 +904,35 @@
             "action_const" : false,
             "action_data" : [],
             "action_entry_const" : false
-          }
+          },
+          "entries" : [
+            {
+              "source_info" : {
+                "filename" : "basic-seperate.p4",
+                "line" : 207,
+                "column" : 12,
+                "source_fragment" : "(0x0a000101) : arp_response()"
+              },
+              "match_key" : [
+                {
+                  "match_type" : "exact",
+                  "key" : "0x0a000101"
+                }
+              ],
+              "action_entry" : {
+                "action_id" : 2,
+                "action_data" : []
+              },
+              "priority" : 1
+            }
+          ]
         },
         {
           "name" : "ingress.port_mac",
           "id" : 1,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 209,
+            "line" : 213,
             "column" : 10,
             "source_fragment" : "port_mac"
           },
@@ -907,13 +966,13 @@
           }
         },
         {
-          "name" : "tbl_basicseperate239",
+          "name" : "tbl_basicseperate244",
           "id" : 2,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 239,
+            "line" : 244,
             "column" : 14,
-            "source_fragment" : "clone(CloneType.I2E, (bit<32>)SEP_IP)"
+            "source_fragment" : "              log_msg(\\\"clone 10.0.1.2's icmp packet in ingress\\\");"
           },
           "key" : [],
           "match_type" : "exact",
@@ -923,10 +982,10 @@
           "support_timeout" : false,
           "direct_meters" : null,
           "action_ids" : [6],
-          "actions" : ["basicseperate239"],
+          "actions" : ["basicseperate244"],
           "base_default_next" : null,
           "next_tables" : {
-            "basicseperate239" : null
+            "basicseperate244" : null
           },
           "default_entry" : {
             "action_id" : 6,
@@ -936,11 +995,11 @@
           }
         },
         {
-          "name" : "tbl_basicseperate241",
+          "name" : "tbl_basicseperate247",
           "id" : 3,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 241,
+            "line" : 247,
             "column" : 44,
             "source_fragment" : "="
           },
@@ -952,10 +1011,10 @@
           "support_timeout" : false,
           "direct_meters" : null,
           "action_ids" : [7],
-          "actions" : ["basicseperate241"],
+          "actions" : ["basicseperate247"],
           "base_default_next" : null,
           "next_tables" : {
-            "basicseperate241" : null
+            "basicseperate247" : null
           },
           "default_entry" : {
             "action_id" : 7,
@@ -972,7 +1031,7 @@
           "id" : 0,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 226,
+            "line" : 231,
             "column" : 11,
             "source_fragment" : "hdr.ethernet.etherType == TYPE_ARP"
           },
@@ -998,7 +1057,7 @@
           "id" : 1,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 227,
+            "line" : 232,
             "column" : 15,
             "source_fragment" : "hdr.arp.isValid()"
           },
@@ -1021,7 +1080,7 @@
           "id" : 2,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 228,
+            "line" : 233,
             "column" : 19,
             "source_fragment" : "hdr.arp.opCode == ARP_REQ"
           },
@@ -1047,7 +1106,7 @@
           "id" : 3,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 233,
+            "line" : 238,
             "column" : 18,
             "source_fragment" : "hdr.ethernet.etherType == TYPE_IPV4"
           },
@@ -1073,26 +1132,66 @@
           "id" : 4,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 238,
+            "line" : 243,
             "column" : 13,
-            "source_fragment" : "standard_metadata.instance_type == 0"
+            "source_fragment" : "hdr.ipv4.srcAddr == 0x0a000102 && hdr.ipv4.protocol == 1 && standard_metadata.instance_type == 0"
           },
           "expression" : {
             "type" : "expression",
             "value" : {
-              "op" : "==",
+              "op" : "and",
               "left" : {
-                "type" : "field",
-                "value" : ["standard_metadata", "instance_type"]
+                "type" : "expression",
+                "value" : {
+                  "op" : "and",
+                  "left" : {
+                    "type" : "expression",
+                    "value" : {
+                      "op" : "==",
+                      "left" : {
+                        "type" : "field",
+                        "value" : ["ipv4", "srcAddr"]
+                      },
+                      "right" : {
+                        "type" : "hexstr",
+                        "value" : "0x0a000102"
+                      }
+                    }
+                  },
+                  "right" : {
+                    "type" : "expression",
+                    "value" : {
+                      "op" : "==",
+                      "left" : {
+                        "type" : "field",
+                        "value" : ["ipv4", "protocol"]
+                      },
+                      "right" : {
+                        "type" : "hexstr",
+                        "value" : "0x01"
+                      }
+                    }
+                  }
+                }
               },
               "right" : {
-                "type" : "hexstr",
-                "value" : "0x00000000"
+                "type" : "expression",
+                "value" : {
+                  "op" : "==",
+                  "left" : {
+                    "type" : "field",
+                    "value" : ["standard_metadata", "instance_type"]
+                  },
+                  "right" : {
+                    "type" : "hexstr",
+                    "value" : "0x00000000"
+                  }
+                }
               }
             }
           },
-          "true_next" : "tbl_basicseperate239",
-          "false_next" : "tbl_basicseperate241"
+          "true_next" : "tbl_basicseperate244",
+          "false_next" : "tbl_basicseperate247"
         }
       ]
     },
@@ -1101,49 +1200,20 @@
       "id" : 1,
       "source_info" : {
         "filename" : "basic-seperate.p4",
-        "line" : 251,
+        "line" : 257,
         "column" : 8,
         "source_fragment" : "egress"
       },
-      "init_table" : "tbl_basicseperate255",
+      "init_table" : "node_13",
       "tables" : [
         {
-          "name" : "tbl_basicseperate255",
+          "name" : "tbl_basicseperate263",
           "id" : 4,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 255,
-            "column" : 10,
-            "source_fragment" : "          log_msg(\\\"test\\\");"
-          },
-          "key" : [],
-          "match_type" : "exact",
-          "type" : "simple",
-          "max_size" : 1024,
-          "with_counters" : false,
-          "support_timeout" : false,
-          "direct_meters" : null,
-          "action_ids" : [10],
-          "actions" : ["basicseperate255"],
-          "base_default_next" : "node_14",
-          "next_tables" : {
-            "basicseperate255" : "node_14"
-          },
-          "default_entry" : {
-            "action_id" : 10,
-            "action_const" : true,
-            "action_data" : [],
-            "action_entry_const" : true
-          }
-        },
-        {
-          "name" : "tbl_basicseperate257",
-          "id" : 5,
-          "source_info" : {
-            "filename" : "basic-seperate.p4",
-            "line" : 257,
-            "column" : 44,
-            "source_fragment" : "="
+            "line" : 263,
+            "column" : 14,
+            "source_fragment" : "              log_msg(\\\"egress clone packet: standard_metadata.egress_spec = 0x02;\\\");"
           },
           "key" : [],
           "match_type" : "exact",
@@ -1153,10 +1223,10 @@
           "support_timeout" : false,
           "direct_meters" : null,
           "action_ids" : [8],
-          "actions" : ["basicseperate257"],
+          "actions" : ["basicseperate263"],
           "base_default_next" : null,
           "next_tables" : {
-            "basicseperate257" : null
+            "basicseperate263" : null
           },
           "default_entry" : {
             "action_id" : 8,
@@ -1166,13 +1236,13 @@
           }
         },
         {
-          "name" : "tbl_basicseperate259",
-          "id" : 6,
+          "name" : "tbl_basicseperate266",
+          "id" : 5,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 259,
+            "line" : 266,
             "column" : 14,
-            "source_fragment" : "mark_to_drop(standard_metadata)"
+            "source_fragment" : "              log_msg(\\\"egress normal packet:  standard_metadata.egress_spec = 0x03;\\\");"
           },
           "key" : [],
           "match_type" : "exact",
@@ -1182,10 +1252,10 @@
           "support_timeout" : false,
           "direct_meters" : null,
           "action_ids" : [9],
-          "actions" : ["basicseperate259"],
+          "actions" : ["basicseperate266"],
           "base_default_next" : null,
           "next_tables" : {
-            "basicseperate259" : null
+            "basicseperate266" : null
           },
           "default_entry" : {
             "action_id" : 9,
@@ -1198,30 +1268,116 @@
       "action_profiles" : [],
       "conditionals" : [
         {
-          "name" : "node_14",
+          "name" : "node_13",
           "id" : 5,
           "source_info" : {
             "filename" : "basic-seperate.p4",
-            "line" : 256,
+            "line" : 262,
             "column" : 13,
-            "source_fragment" : "standard_metadata.instance_type != 0"
+            "source_fragment" : "hdr.ipv4.srcAddr == 0x0a000102 && hdr.ipv4.protocol == 1 && standard_metadata.instance_type != 0"
           },
           "expression" : {
             "type" : "expression",
             "value" : {
-              "op" : "!=",
+              "op" : "and",
               "left" : {
-                "type" : "field",
-                "value" : ["standard_metadata", "instance_type"]
+                "type" : "expression",
+                "value" : {
+                  "op" : "and",
+                  "left" : {
+                    "type" : "expression",
+                    "value" : {
+                      "op" : "==",
+                      "left" : {
+                        "type" : "field",
+                        "value" : ["ipv4", "srcAddr"]
+                      },
+                      "right" : {
+                        "type" : "hexstr",
+                        "value" : "0x0a000102"
+                      }
+                    }
+                  },
+                  "right" : {
+                    "type" : "expression",
+                    "value" : {
+                      "op" : "==",
+                      "left" : {
+                        "type" : "field",
+                        "value" : ["ipv4", "protocol"]
+                      },
+                      "right" : {
+                        "type" : "hexstr",
+                        "value" : "0x01"
+                      }
+                    }
+                  }
+                }
               },
               "right" : {
-                "type" : "hexstr",
-                "value" : "0x00000000"
+                "type" : "expression",
+                "value" : {
+                  "op" : "!=",
+                  "left" : {
+                    "type" : "field",
+                    "value" : ["standard_metadata", "instance_type"]
+                  },
+                  "right" : {
+                    "type" : "hexstr",
+                    "value" : "0x00000000"
+                  }
+                }
               }
             }
           },
-          "true_next" : "tbl_basicseperate257",
-          "false_next" : "tbl_basicseperate259"
+          "true_next" : "tbl_basicseperate263",
+          "false_next" : "node_15"
+        },
+        {
+          "name" : "node_15",
+          "id" : 6,
+          "source_info" : {
+            "filename" : "basic-seperate.p4",
+            "line" : 265,
+            "column" : 20,
+            "source_fragment" : "hdr.ipv4.srcAddr == 0x0a000102 && hdr.ipv4.protocol == 1"
+          },
+          "expression" : {
+            "type" : "expression",
+            "value" : {
+              "op" : "and",
+              "left" : {
+                "type" : "expression",
+                "value" : {
+                  "op" : "==",
+                  "left" : {
+                    "type" : "field",
+                    "value" : ["ipv4", "srcAddr"]
+                  },
+                  "right" : {
+                    "type" : "hexstr",
+                    "value" : "0x0a000102"
+                  }
+                }
+              },
+              "right" : {
+                "type" : "expression",
+                "value" : {
+                  "op" : "==",
+                  "left" : {
+                    "type" : "field",
+                    "value" : ["ipv4", "protocol"]
+                  },
+                  "right" : {
+                    "type" : "hexstr",
+                    "value" : "0x01"
+                  }
+                }
+              }
+            }
+          },
+          "false_next" : null,
+          "true_next" : "tbl_basicseperate266"
         }
       ]
     }
@@ -1232,7 +1388,7 @@
       "id" : 0,
       "source_info" : {
         "filename" : "basic-seperate.p4",
-        "line" : 274,
+        "line" : 281,
         "column" : 1,
         "source_fragment" : "update_checksum( ..."
       },
