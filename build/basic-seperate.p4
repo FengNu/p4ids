@@ -14,6 +14,7 @@ const bit<16> TYPE_IPV4 = 0x0800;
 const bit<16> TYPE_ARP  = 0x0806;
 const bit<8>  TYPE_TCP = 0x06;
 const bit<8>  TYPE_UDP = 0x11;
+
 const bit<16> ARP_REQ = 0x0001;
 const bit<16> ARP_RES = 0x0002;
 
@@ -25,10 +26,20 @@ typedef bit<9>  egressSpec_t;
 typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
 typedef bit<16>  port_t;
+
 header ethernet_t {
     macAddr_t dstAddr;
     macAddr_t srcAddr;
     bit<16>   etherType;
+}
+
+const bit<8> DIS_IPV4 = 3;
+const bit<8> DIS_TR = 4;
+const bit<8> DIS_APP = 5;
+
+header distribute_t {
+    bit<64>   group;
+    bit<8>   type;
 }
 
 header ipv4_t {
@@ -85,15 +96,16 @@ header udp_t {
     bit<16> checksum;
 }
 
-const bit<9> SEP_IP = 0x02;
-const bit<9> SEP_TR = 0x03;
+const bit<32> SEP_TR = 0x03;
+const bit<32> SEP_AP = 0x04;
 
 struct metadata {
-    bit<9> sep;
+    bit<64> groupId;
 }
 
 struct headers {
     ethernet_t   ethernet;
+    distribute_t dis;
     ipv4_t       ipv4;
     arp_t        arp;
     udp_t        udp;
@@ -163,6 +175,8 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 control ingress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
+    register<bit<64>>(1) globalGroupId;
+    bit<64> currentGroupId;
 
     action arp_response() {
         log_msg("send arp_response");
@@ -201,7 +215,6 @@ control ingress(inout headers hdr,
             drop;
             NoAction;
         }
-        //size = 1024;
         default_action = drop();
         const entries = {
             (0x0a000101) : arp_response();
@@ -221,10 +234,13 @@ control ingress(inout headers hdr,
             drop;
             NoAction;
         }
+        const entries = {
+            (1) : set_smac(0x000c29908cf6);
+            (2) : set_smac(0x000c29908c00);
+            (3) : set_smac(0x000c29908c0a);
+        }
 
         default_action = drop();
-        size = 1024;
-
     }
 
     apply {
@@ -236,16 +252,16 @@ control ingress(inout headers hdr,
                 }
             }
         }else if (hdr.ethernet.etherType == TYPE_IPV4) {
-            // sperate logic
-            // meta.sep = SEP_IP; // port 3
-            // standard_metadata.egress_spec = meta.sep;
-            // NoAction();
-          if(hdr.ipv4.srcAddr == 0x0a000102 && hdr.ipv4.protocol == 1 && standard_metadata.instance_type == PKT_INSTANCE_TYPE_NORMAL) {
-              log_msg("clone 10.0.1.2's icmp packet in ingress");
-              clone(CloneType.I2E, (bit<32>)SEP_IP);
-          } else {
-              standard_metadata.egress_spec = 0x02;
+          globalGroupId.read(currentGroupId, 0);
+          if(hdr.ipv4.srcAddr == 0x0a000102 && standard_metadata.instance_type == PKT_INSTANCE_TYPE_NORMAL) {
+              standard_metadata.egress_spec = 2;// origin packet is used to ipv4 header packet
+              meta.groupId = currentGroupId;
+              if(hdr.tcp.isValid() || hdr.udp.isValid()) {
+                  clone3(CloneType.I2E, (bit<32>)SEP_TR, meta);
+              }
+              globalGroupId.write(0, currentGroupId + 1);
           }
+
         }
     }
 }
@@ -257,18 +273,52 @@ control ingress(inout headers hdr,
 control egress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
+
+    action reserve_ipv4_header(in bit<64> groupId) {
+        hdr.dis.setValid();
+        hdr.dis.group = groupId;
+        hdr.dis.type = DIS_IPV4;
+        hdr.tcp.setInvalid();
+        hdr.udp.setInvalid();
+    }
+    
+    action reserve_transport_header(in bit<64> groupId) {
+        hdr.dis.setValid();
+        hdr.dis.group = groupId;
+        hdr.dis.type = DIS_TR;
+        hdr.ipv4.setInvalid();
+    }
+
+    action reserve_application_header(in bit<64> groupId) {
+        hdr.dis.setValid();
+        hdr.dis.group = groupId;
+        hdr.dis.type = DIS_APP;
+        hdr.ipv4.setInvalid();
+        hdr.tcp.setInvalid();
+        hdr.udp.setInvalid();
+    }
+
     apply {
-          //log_msg("packet type ={}", standard_metadata.instance_type);
-          if(hdr.ipv4.srcAddr == 0x0a000102 && hdr.ipv4.protocol == 1 && standard_metadata.instance_type != 0) {
-              log_msg("egress clone packet: standard_metadata.egress_spec = 0x02;");
-              // standard_metadata.egress_spec = 0x02;
-          }else if (hdr.ipv4.srcAddr == 0x0a000102 && hdr.ipv4.protocol == 1){
-              log_msg("egress normal packet:  standard_metadata.egress_spec = 0x03;");
+
+          if(hdr.ipv4.srcAddr == 0x0a000102 && standard_metadata.instance_type == PKT_INSTANCE_TYPE_NORMAL) {
+              // normal packet to port 2
+              log_msg("packet only contains ipv4 header");
+              clone3(CloneType.E2E, SEP_AP,meta);
+              // remove other packet header
+              reserve_ipv4_header(meta.groupId);
+
+          }else if (hdr.ipv4.srcAddr == 0x0a000102 && standard_metadata.instance_type == PKT_INSTANCE_TYPE_INGRESS_CLONE){
+              // ingress cloned packet to port 3
+              log_msg("packet only contains transport header");
+              //clone(CloneType.E2E, SEP_RE);
+              reserve_transport_header(meta.groupId);
+
+          }else if (hdr.ipv4.srcAddr == 0x0a000102 && standard_metadata.instance_type == PKT_INSTANCE_TYPE_EGRESS_CLONE){
+              // egress cloned packet to port 4
+              log_msg("packet reserved");
+              reserve_application_header(meta.groupId);
           }
-//        standard_metadata.egress_spec = 0x02;
-       //if(meta.sep>=1){
-       //     standard_metadata.egress_spec = meta.sep;
-       // }
+          
     }
 }
 
@@ -278,21 +328,21 @@ control egress(inout headers hdr,
 
 control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
      apply {
-	update_checksum(
-	    hdr.ipv4.isValid(),
-            { hdr.ipv4.version,
-	      hdr.ipv4.ihl,
-              hdr.ipv4.diffserv,
-              hdr.ipv4.totalLen,
-              hdr.ipv4.identification,
-              hdr.ipv4.flags,
-              hdr.ipv4.fragOffset,
-              hdr.ipv4.ttl,
-              hdr.ipv4.protocol,
-              hdr.ipv4.srcAddr,
-              hdr.ipv4.dstAddr },
-            hdr.ipv4.hdrChecksum,
-            HashAlgorithm.csum16);
+	//update_checksum(
+	//    hdr.ipv4.isValid(),
+        //   { hdr.ipv4.version,
+	//     hdr.ipv4.ihl,
+        //      hdr.ipv4.diffserv,
+        //      hdr.ipv4.totalLen,
+        //      hdr.ipv4.identification,
+        //      hdr.ipv4.flags,
+        //      hdr.ipv4.fragOffset,
+        //      hdr.ipv4.ttl,
+        //      hdr.ipv4.protocol,
+        //      hdr.ipv4.srcAddr,
+        //      hdr.ipv4.dstAddr },
+        //    hdr.ipv4.hdrChecksum,
+        //    HashAlgorithm.csum16);
     }
 }
 
@@ -304,7 +354,10 @@ control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.arp);
+        packet.emit(hdr.dis);
         packet.emit(hdr.ipv4);
+        packet.emit(hdr.tcp);
+        packet.emit(hdr.udp);
     }
 }
 
