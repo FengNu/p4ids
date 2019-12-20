@@ -12,8 +12,11 @@
 
 const bit<16> TYPE_IPV4 = 0x0800;
 const bit<16> TYPE_ARP  = 0x0806;
+const bit<16> TYPR_DIS  = 0x9999;
+
 const bit<8>  TYPE_TCP = 0x06;
 const bit<8>  TYPE_UDP = 0x11;
+const bit<8>  TYPE_ICMP= 0x01;
 
 const bit<16> ARP_REQ = 0x0001;
 const bit<16> ARP_RES = 0x0002;
@@ -199,7 +202,7 @@ control ingress(inout headers hdr,
     register<bit<32>>(1) globalGroupId;
     bit<32> currentGroupId;
 
-    action arp_response() {
+    action arp_response(macAddr_t portMacAddr) {
         ip4Addr_t temp;
         // send back to the ingress port
         standard_metadata.egress_spec = standard_metadata.ingress_port;
@@ -212,19 +215,13 @@ control ingress(inout headers hdr,
         temp = hdr.arp.targetIpAddr;
         hdr.arp.targetIpAddr = hdr.arp.senderIpAddr;
         hdr.arp.senderIpAddr = temp;
+        hdr.ethernet.srcAddr = portMacAddr;
+        hdr.arp.senderMacAddr = portMacAddr;
     }
 
     action drop() {
         mark_to_drop(standard_metadata);
     }
-    
-    action set_smac(macAddr_t portMacAddr) {
-        hdr.ethernet.srcAddr = portMacAddr;
-        if(hdr.ethernet.etherType == TYPE_ARP) {
-            hdr.arp.senderMacAddr = portMacAddr;
-        }
-    }
-
     // this table is used to check if the target Ip of the ARP request is the switch's port's ip
     table arp_response_table {
         key = {
@@ -237,44 +234,24 @@ control ingress(inout headers hdr,
         }
         default_action = drop();
         const entries = {
-            (0x0a000101) : arp_response();
+            (0x0a000101) : arp_response(0x000c29908cf6);
         }
     }
 
-    // The table to store every port's mac of this switch. It is used to set the source mac the packet
-    table port_mac {
-
-        key = {
-            standard_metadata.egress_spec: exact;
-        }
-
-        actions = {
-            set_smac;
-            drop;
-            NoAction;
-        }
-
-        const entries = {
-            (1) : set_smac(0x000c29908cf6);
-            (2) : set_smac(0x000c29908c00);
-            (3) : set_smac(0x000c29908c0a);
-        }
-
-        default_action = drop();
-    }
 
     apply {
         if(hdr.ethernet.etherType == TYPE_ARP) {
             if(hdr.arp.isValid()) {
                 if(hdr.arp.opCode == ARP_REQ) {
                     arp_response_table.apply();
-                    port_mac.apply();
                 }
+            } else {
+                drop();
             }
         } else if (hdr.ethernet.etherType == TYPE_IPV4) {
           globalGroupId.read(currentGroupId, 0);
           meta.segNum = 1;
-          if(hdr.ipv4.srcAddr != 0x00000000 && standard_metadata.instance_type == PKT_INSTANCE_TYPE_NORMAL) {
+          if((hdr.ipv4.protocol == TYPE_ICMP || hdr.ipv4.protocol == TYPE_TCP || hdr.ipv4.protocol == TYPE_UDP) && standard_metadata.instance_type == PKT_INSTANCE_TYPE_NORMAL) {
               standard_metadata.egress_spec = 2;// origin packet is used to ipv4 header packet
               meta.groupId = currentGroupId;
               if(hdr.tcp.isValid() || hdr.udp.isValid()) {
@@ -282,8 +259,12 @@ control ingress(inout headers hdr,
                   clone3(CloneType.I2E, (bit<32>)SEP_TR, meta);
               }
               globalGroupId.write(0, currentGroupId + 1);
+          } else {
+              drop();
           }
 
+        } else {
+            drop();
         }
 
     }
@@ -303,8 +284,8 @@ control egress(inout headers hdr,
         hdr.dis.type = DIS_IPV4;
         hdr.dis.ruleIds = 0;
         hdr.dis.segNum = meta.segNum;
-        if(hdr.tcp.isValid()) {
-            hdr.tcp.setInvalid();
+        hdr.tcp.setInvalid();
+//        if(hdr.tcp.isValid()) {
 //            hdr.tcp.srcPort = 0;
 //            hdr.tcp.dstPort = 0;
 //            hdr.tcp.seqNo = 0;
@@ -322,14 +303,14 @@ control egress(inout headers hdr,
 //            hdr.tcp.window = 0;
 //            hdr.tcp.checksum = 0;
 //            hdr.tcp.urgentPtr = 0;
-        }
-        if(hdr.udp.isValid()) {
-            hdr.udp.setInvalid();
+//        }
+        hdr.udp.setInvalid();
+//        if(hdr.udp.isValid()) {
 //            hdr.udp.srcPort = 0;
 //            hdr.udp.dstPort = 0;
 //            hdr.udp.dataLen = 0;
 //            hdr.udp.checksum = 0;
-        }
+//        }
     }
     
     action reserve_transport_header(in bit<32> groupId) {
@@ -358,22 +339,54 @@ control egress(inout headers hdr,
 //        hdr.ipv4.dstAddr = 0;
     }
 
-    apply {
+    action set_mac(macAddr_t portMacAddr, macAddr_t dstMacAddr) {
+        hdr.ethernet.srcAddr = portMacAddr;
+        hdr.ethernet.dstAddr = dstMacAddr;
+        hdr.ethernet.etherType = TYPR_DIS;
+    }
 
+    action drop() {
+        mark_to_drop(standard_metadata);
+    }
+
+    // The table to store every port's mac of this switch. It is used to set the source mac the packet
+    table port_mac {
+
+        key = {
+            standard_metadata.egress_port: exact;
+        }
+
+        actions = {
+            set_mac;
+            drop;
+            NoAction;
+        }
+
+        const entries = {
+            (1) : set_mac(0x000c29908cf6, 0x005079666802);
+            (2) : set_mac(0x000c29908c00, 0x000c29faac42);
+            (3) : set_mac(0x000c29908c0a, 0x000c29d5103d);	
+        }
+
+        default_action = drop();
+    }
+    apply {
+          if(hdr.ipv4.protocol == TYPE_ICMP || hdr.ipv4.protocol == TYPE_TCP || hdr.ipv4.protocol == TYPE_UDP){
           if (hdr.ipv4.srcAddr != 0x00000000 && standard_metadata.instance_type == PKT_INSTANCE_TYPE_NORMAL) {
               // normal packet to port 2
-              log_msg("packet only contains ipv4 header");
+              log_msg("packet only contains ipv4 header, egress port = {}", {standard_metadata.egress_port});
               // remove other packet header
               reserve_ipv4_header(meta.groupId);
-
+              port_mac.apply();
           }else if (hdr.ipv4.srcAddr != 0x00000000 && standard_metadata.instance_type == PKT_INSTANCE_TYPE_INGRESS_CLONE){
               // ingress cloned packet to port 3
-              log_msg("packet only contains transport header");
+              log_msg("packet only contains transport header, egress port = {}", {standard_metadata.egress_port});
               //clone(CloneType.E2E, SEP_RE);
               reserve_transport_header(meta.groupId);
-
+              port_mac.apply();
           }else if (hdr.ipv4.srcAddr != 0x00000000 && standard_metadata.instance_type == PKT_INSTANCE_TYPE_EGRESS_CLONE){
 
+          }
           }
     }
 }

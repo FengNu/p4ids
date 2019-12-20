@@ -1,9 +1,10 @@
 /* -*- P4_16 -*- */
 #include <core.p4>
 #include <v1model.p4>
-#define MAX_CACHED_PACKETS 1024
-
+#define MAX_CACHED_PACKETS 16384
+#define EGRESS_PORT 3
 const bit<16> TYPE_IPV4 = 0x0800;
+const bit<16> TYPE_DIS  = 0x9999;
 const bit<8>  TYPE_TCP = 0x06;
 const bit<8>  TYPE_UDP = 0x11;
 
@@ -100,7 +101,7 @@ struct cached_header {
     bit<64>           ruleid;//64
     bit<8>            segremain;//8
     bit<1>            is_using;//1
-} // 569 bit
+} // 457 bit
 
 /*************************************************************************
 *********************** P A R S E R  ***********************************
@@ -117,6 +118,13 @@ parser MyParser(packet_in packet,
 
     state parse_ethernet {
         packet.extract(hdr.ethernet);
+        transition select(hdr.ethernet.etherType) {
+            TYPE_DIS: parse_dis;
+            default: reject;
+        }
+    }
+
+    state parse_dis {
         packet.extract(hdr.dis);
         transition select(hdr.dis.type) {
             DIS_IPV4: parse_ipv4;
@@ -165,7 +173,6 @@ control MyIngress(inout headers hdr,
     register<bit<457>>(MAX_CACHED_PACKETS) cachedPacketHeaders;
 
     action set_cache_ipv4(inout bit<457> tmp) {
-
         bit<160> ipv4_header = 0;
         ipv4_header = ipv4_header | (((bit<160>)hdr.ipv4.version) << 156);
         ipv4_header = ipv4_header | (((bit<160>)hdr.ipv4.ihl) << 152);
@@ -179,6 +186,7 @@ control MyIngress(inout headers hdr,
         ipv4_header = ipv4_header | (((bit<160>)hdr.ipv4.hdrChecksum) << 64);
         ipv4_header = ipv4_header | (((bit<160>)hdr.ipv4.srcAddr) << 32);
         ipv4_header = ipv4_header | (bit<160>)hdr.ipv4.dstAddr;
+        log_msg("ip src = {} ip dst = {}", {hdr.ipv4.srcAddr, hdr.ipv4.dstAddr});
         bit<457> ipv4_header_tmp = ((bit<457>)ipv4_header) << 256;
         tmp = tmp | (ipv4_header_tmp << 41);
 
@@ -188,6 +196,7 @@ control MyIngress(inout headers hdr,
         bit<160> ipv4_header;
         bit<457> tmp2;
         tmp2 = tmp & 372141426839350727961253789638658321589064376671652217367081171219703759803008564472878384416238703535780893506238985439499298945577779200; // get first 160bit
+
         tmp2 = tmp2 >> 256;
         tmp2 = tmp2 >> 41;
         ipv4_header = (bit<160>) tmp2;
@@ -216,7 +225,7 @@ control MyIngress(inout headers hdr,
         hdr.ipv4.protocol = (bit<8>)(protocol >> 80);
         hdr.ipv4.hdrChecksum = (bit<16>)(hdrChecksum >> 64);
         hdr.ipv4.srcAddr = (bit<32>)(srcAddr >> 32);
-        hdr.ipv4.srcAddr = (bit<32>)srcAddr;
+        hdr.ipv4.dstAddr = (bit<32>)dstAddr;
     }
 
     action set_cache_tcp(inout bit<457> tmp) {
@@ -264,7 +273,7 @@ control MyIngress(inout headers hdr,
         bit<160> rst = tcp & 1125899906842624;
         bit<160> syn = tcp & 562949953421312;
         bit<160> fin = tcp & 281474976710656;
-        bit<160> window = tcp & 288230371856744448;
+        bit<160> window = tcp & 281470681743360;
         bit<160> checksum = tcp & 4294901760;
         bit<160> urgentPtr = tcp & 65535;
 
@@ -337,6 +346,7 @@ control MyIngress(inout headers hdr,
     }
 
     action get_cache_segremain(in bit<457> tmp, inout bit<8> segremain){
+        
         segremain = (bit<8>) ((tmp & 510) >> 1);
     }
 
@@ -389,17 +399,32 @@ control MyIngress(inout headers hdr,
 
     }
 
+    action forward_packet(bit<32> index) {
+        standard_metadata.egress_spec = EGRESS_PORT;
+        hdr.ethernet.etherType = TYPE_IPV4;
+        hdr.dis.setInvalid();
+        cachedPacketHeaders.write(index, 0);
+    }
+
     apply {
+
         // get the index to cache
         bit<32> index = hdr.dis.group % MAX_CACHED_PACKETS;
         bit<457> tmp;
         bit<1> is_using = 0;
         bit<8> segremain = 0;
-        cachedPacketHeaders.read(tmp, index);
+    if(hdr.ethernet.etherType == TYPE_DIS){
+        log_msg("the index of this packet = {}", {index});
+        log_msg("packet's srcMac={},dstMac={},etherType={}",{hdr.ethernet.srcAddr,hdr.ethernet.dstAddr,hdr.ethernet.etherType});
+    if(hdr.dis.segNum == 1) {
+        forward_packet(index);
+    } else {
         // if-else according to hdr.dis.type
         if (hdr.dis.type == DIS_IPV4) {
-
+            log_msg("the type of this packet is ipv4");
+            cachedPacketHeaders.read(tmp, index);
             get_cache_is_using(tmp, is_using);
+            log_msg("is_using={}",{is_using});
             // is using
             if(is_using == 1) {
                 get_cache_segremain(tmp, segremain);
@@ -410,10 +435,11 @@ control MyIngress(inout headers hdr,
                         get_cache_tcp(tmp);
                     } else if (hdr.ipv4.protocol == TYPE_UDP) {
                         hdr.udp.setValid();
+                        log_msg("used,tmp = {}",{tmp});
                         get_cache_udp(tmp);
                     }
-                    standard_metadata.egress_spec = 2;
-                    cachedPacketHeaders.write(index, 0);
+                    forward_packet(index);
+                    
                 } else {
                     // there are remain headers, cache current header;
                     set_cache_ipv4(tmp);
@@ -421,15 +447,20 @@ control MyIngress(inout headers hdr,
                     cachedPacketHeaders.write(index, tmp);
                 }
             } else {
+                log_msg("not used,tmp = {}",{tmp});
                 // not used, first header
                 set_cache_ipv4(tmp);
-                set_cache_segremain(tmp, segremain - 1);
+                set_cache_segremain(tmp, hdr.dis.segNum-1);
+                set_cache_is_using(tmp, 1);
+                log_msg("ready to write,tmp = {}",{tmp});
                 cachedPacketHeaders.write(index, tmp);
             }
 
         } else if (hdr.dis.type == DIS_TCP){
-
+            log_msg("the type of this packet is tcp");
+            cachedPacketHeaders.read(tmp, index);
             get_cache_is_using(tmp, is_using);
+            log_msg("is_using={}",{is_using});
             // is using
             if(is_using == 1) {
                 get_cache_segremain(tmp, segremain);
@@ -437,8 +468,7 @@ control MyIngress(inout headers hdr,
                     // headers are enough , it is time to aggregate the packet
                     hdr.ipv4.setValid();
                     get_cache_ipv4(tmp);
-                    standard_metadata.egress_spec = 2;
-                    cachedPacketHeaders.write(index, 0);
+                    forward_packet(index);
                 } else {
                     // there are remain headers, cache current header;
                     set_cache_tcp(tmp);
@@ -448,22 +478,26 @@ control MyIngress(inout headers hdr,
             } else {
                 // not used, first header
                 set_cache_tcp(tmp);
-                set_cache_segremain(tmp, segremain - 1);
+                set_cache_segremain(tmp, hdr.dis.segNum-1);
+                set_cache_is_using(tmp, 1);
                 cachedPacketHeaders.write(index, tmp);
             }
 
         } else if (hdr.dis.type == DIS_UDP) {
-
+            log_msg("the type of this packet is udp");
+            cachedPacketHeaders.read(tmp, index);
             get_cache_is_using(tmp, is_using);
+            log_msg("is_using={}",{is_using});
             // is using
             if(is_using == 1) {
+                log_msg("used,tmp = {}",{tmp});
                 get_cache_segremain(tmp, segremain);
+                log_msg("segremain = {}", {segremain});
                 if(segremain - 1 <= 0) {
                     // headers are enough , it is time to aggregate the packet
                     hdr.ipv4.setValid();
                     get_cache_ipv4(tmp);
-                    standard_metadata.egress_spec = 2;
-                    cachedPacketHeaders.write(index, 0);
+                    forward_packet(index);
                 } else {
                     // there are remain headers, cache current header;
                     set_cache_udp(tmp);
@@ -472,11 +506,17 @@ control MyIngress(inout headers hdr,
                 }
             } else {
                 // not used, first header
+                log_msg("not used,tmp = {}",{tmp});
                 set_cache_udp(tmp);
-                set_cache_segremain(tmp, segremain - 1);
+                set_cache_segremain(tmp, hdr.dis.segNum-1);
+                set_cache_is_using(tmp, 1);
+                log_msg("ready to write,tmp = {}",{tmp});
                 cachedPacketHeaders.write(index, tmp);
             }
         }
+ }
+    log_msg("end of the packet index={}", {index});
+}
     }
 }
 

@@ -6,8 +6,8 @@
 #define EGRESS_PORT 2
 
 const bit<16> TYPE_IPV4 = 0x0800;
-const bit<16> TYPE_ARP  = 0x0806;
-const bit<16> TYPE_IDS  = 0xFFFF;
+const bit<16> TYPR_DIS  = 0x9999;
+
 const bit<16> ARP_REQ = 0x0001;
 const bit<16> ARP_RES = 0x0002;
 const bit<9>  CON_PORT = 0x0;
@@ -33,6 +33,7 @@ header ethernet_t {
 header distribute_t {
     bit<32>  group;
     bit<8>   type;
+    bit<8>   segNum;
     bit<64>  ruleIds;
 }
 
@@ -107,6 +108,13 @@ parser MyParser(packet_in packet,
 
     state parse_ethernet {
         packet.extract(hdr.ethernet);
+        transition select(hdr.ethernet.etherType) {
+            TYPR_DIS: parse_dis;
+            default: reject;
+        }
+    }
+
+    state parse_dis {
         packet.extract(hdr.dis);
         transition select(hdr.dis.type) {
             DIS_IPV4: parse_ipv4;
@@ -115,7 +123,7 @@ parser MyParser(packet_in packet,
             default: reject;
         }
     }
-    
+
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
         transition accept;
@@ -216,7 +224,6 @@ control ingress(inout headers hdr,
     table port_mac {
 
         key = {
-            standard_metadata.ingress_port: exact;
             standard_metadata.egress_spec: exact;
         }
 
@@ -224,8 +231,10 @@ control ingress(inout headers hdr,
             set_mac;
             NoAction;
         }
-        size = 1024;
         default_action = NoAction;
+        const entries = {
+            (2) : set_mac(0x000c29faac4c, 0x000c29bf7de4);
+        }
     }
 
     apply {
@@ -235,8 +244,6 @@ control ingress(inout headers hdr,
             tcp_filter.apply();
         } else if(hdr.dis.type == DIS_UDP) {
             udp_filter.apply();
-        } else if(hdr.dis.type == DIS_APP) {
-            
         }
         port_mac.apply();
     }
@@ -274,7 +281,8 @@ control MyDeparser(packet_out packet, in headers hdr) {
         packet.emit(hdr.ethernet);
         packet.emit(hdr.dis);
         packet.emit(hdr.ipv4);
-        packet.emit(hdr.ipv4options);
+        packet.emit(hdr.udp);
+        packet.emit(hdr.tcp);
     }
 }
 
