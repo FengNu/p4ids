@@ -1,31 +1,43 @@
 /* -*- P4_16 -*- */
 #include <core.p4>
 #include <v1model.p4>
-
-#define MAX_IDS 9
+#define MAX_CACHED_PACKETS 1024
 
 const bit<16> TYPE_IPV4 = 0x0800;
 const bit<16> TYPE_ARP  = 0x0806;
-const bit<16> TYPE_IDS  = 0xFFFF;
 const bit<16> ARP_REQ = 0x0001;
 const bit<16> ARP_RES = 0x0002;
-const bit<9>  CON_PORT = 0x0;
 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
 
 typedef bit<9>  egressSpec_t;
-typedef bit<16> port_t;
-typedef bit<32> ip4Addr_t;
 typedef bit<48> macAddr_t;
+typedef bit<32> ip4Addr_t;
+typedef bit<16>  port_t;
 
+const bit<8> DIS_IPV4 = 3;
+const bit<8> DIS_TCP = 4;
+const bit<8> DIS_UDP = 5;
+const bit<8> DIS_APP = 6;
+
+// 112bit
 header ethernet_t {
     macAddr_t dstAddr;
     macAddr_t srcAddr;
     bit<16>   etherType;
 }
 
+// 144bit
+header distribute_t {
+    bit<64>  group;
+    bit<8>   type;
+    bit<8>   segNum;
+    bit<64>  ruleIds; // max number of rules is 64
+}
+
+// 160bit
 header ipv4_t {
     bit<4>    version;
     bit<4>    ihl;
@@ -40,20 +52,12 @@ header ipv4_t {
     ip4Addr_t srcAddr;
     ip4Addr_t dstAddr;
 }
-
-header arp_t {
-    bit<16> hardwareType; // 0x0001 mac address
-    bit<16> protocolType; // 0x0800 ipv4
-    bit<8>  hardwaresize; // 0x06 mac address length
-    bit<8>  protocolSize; // 0x04 ipv4 address length
-    bit<16> opCode;       // arp request: 0x0001 arp reponse: 0x0002
-    macAddr_t senderMacAddr;
-    ip4Addr_t senderIpAddr;
-    macAddr_t targetMacAddr;
-    ip4Addr_t targetIpAddr;
+// 320bit
+header ipv4_options_t {
+    varbit<320> options;
 }
-
-header tcp_t{
+// 160bit
+header tcp_t {
     port_t srcPort;
     port_t dstPort;
     bit<32> seqNo;
@@ -72,33 +76,17 @@ header tcp_t{
     bit<16> checksum;
     bit<16> urgentPtr;
 }
+// 320bit
+header tcp_options_t {
+   varbit<320> options;
+}
 
+// 64bit
 header udp_t {
     port_t srcPort;
     port_t dstPort;
     bit<16> dataLen;
-    bit<16> checksum
-}
-
-header http_t {
-}
-const bit<2> LINK_LAYER = 0;
-const bit<2> NET_LAYER = 1;
-const bit<2> TRANS_LAYER =2;
-const bit<2> APP_LAYER = 3;
-
-const bit<2> ACCEPT = 0;
-const bit<2> REJECT = 1;
-const bit<2> UNKOWN = 2;
-const bit<2> RESERVED = 3;
-
-header ids_count_t{
-    bit<8> count;
-}
-
-header ids_t {
-    bit<2> layer; // 00: data link layer, 01: network layer, 10: transport layer, 11: application layer
-    bit<2> flag;// 00: accept, 01:reject, 10:unkown, 11: reserved
+    bit<16> checksum;
 }
 
 struct metadata {
@@ -106,17 +94,27 @@ struct metadata {
 }
 
 struct headers {
-    // data link layer
-    ethernet_t  ethernet;
-    // ids layer
-    ids_count_t ids_count;
-    ids_t[MAX_IDS] idses;
-    // network layer
-    ipv4_t          ipv4;
-    arp_t            arp;
-    // transport layer
-    tcp_t            tcp;
-    udp_t            udp;
+    ethernet_t        ethernet;
+    distribute_t      dis;
+    ipv4_t            ipv4;
+    ipv4_options_t    ipv4options;
+    arp_t             arp;
+    udp_t             udp;
+    tcp_t             tcp;
+    tcp_options_t     tcpoptions;
+}
+
+struct cached_header {
+
+    ethernet_t        ethernet; //112
+    ipv4_t            ipv4;//160
+    ipv4_options_t    ipv4options;//320
+    udp_t             udp;//64
+    tcp_t             tcp;//160
+    tcp_options_t     tcpoptions;//320
+    bit<64>           ruleid;//64
+    bit<8>            segremain;//8
+    bit<1>            is_using;//1
 }
 
 /*************************************************************************
@@ -128,48 +126,60 @@ parser MyParser(packet_in packet,
                 inout metadata meta,
                 inout standard_metadata_t standard_metadata) {
 
-    // init parse
     state start {
         transition parse_ethernet;
     }
 
-    // parse data link layer
     state parse_ethernet {
         packet.extract(hdr.ethernet);
-        transition select(hdr.ethernet.etherType) {
-            TYPE_IPV4: parse_ipv4;
-            TYPE_ARP:  parse_arp;
+        packet.extract(hdr.dis);
+        transition select(hdr.dis.type) {
+            DIS_IPV4: parse_ipv4;
+            DIS_TCP: parse_tcp;
+            DIS_UDP: parse_udp;
+            DIS_APP: parse_app;
             default: accept;
         }
     }
     
-    // parse network layer
-    state parse_arp {
-        packet.extract(hdr.arp);
-        transition accept;
-    }
 
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
-        transition select(hdr.ipv4.protocol){
-            TYPE_TCP: tcp;
-            TYPE_UDP: udp;
-            default: accept;
+        verify(hdr.ipv4.ihl >= 5, error.InvalidIPv4Header);
+        transition select (hdr.ipv4.ihl) {
+            5 : accept;
+            _ : parse_ipv4_options;
         }
     }
 
-    // parse transport layer
-    state tcp {
-        packet.extract(hdr.tcp);
+    state parse_ipv4_options {
+        packet.extract(hdr.ipv4options, (bit<32>)(((bit<16>)hdr.ipv4.ihl - 5) * 32));
         transition accept;
     }
 
-    state udp {
+    state parse_tcp {
+        packet.extract(hdr.tcp);
+        verify(hdr.tcp.dataOffset >= 5, error.InvalidTCPHeader);
+        transition select (hdr.tcp.dataOffset) {
+            5 : accept;
+            _ : parse_tcp_options;
+        }
+    }
+
+    state parse_tcp_options {
+        packet.extract(hdr.tcpoptions, (bit<32>)(((bit<16>)hdr.tcp.dataOffset - 5) * 32));
+        transition accept;
+    }
+
+    state parse_udp {
         packet.extract(hdr.udp);
         transition accept;
     }
-
-    // parse application layer
+    
+    state parse_app {
+        // plan to extract http
+        transition accept;
+    }
 
 }
 
@@ -186,9 +196,12 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 **************  I N G R E S S   P R O C E S S I N G   *******************
 *************************************************************************/
 
-control Forward(inout headers hdr,
+control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
+
+    // need a register to save the incomplete packets
+    register<>(MAX_CACHED_PACKETS) cachedPacketheads;
 
     action arp_response() {
         ip4Addr_t temp;
@@ -206,7 +219,7 @@ control Forward(inout headers hdr,
     }
 
     action drop() {
-        mark_to_drop();
+        mark_to_drop(standard_metadata);
     }
     
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
@@ -269,100 +282,18 @@ control Forward(inout headers hdr,
     }
 
     apply {
-
-        if(hdr.ethernet.etherType == TYPE_ARP) {
-            if(hdr.arp.isValid()) {
-                if(hdr.arp.opCode == ARP_REQ) {
-                    arp_response_table.apply();
-                    port_mac.apply();
-                }
-            }
-        }else if (hdr.ethernet.etherType == TYPE_IPV4) {
-            if(hdr.ipv4.isValid()){
-                ipv4_lpm.apply();
-                port_mac.apply();
-            }
-        }
+        
     }
 }
 
 /*************************************************************************
-****************  I D S   P R O C E S S I N G   *******************
+****************  E G R E S S   P R O C E S S I N G   *******************
 *************************************************************************/
 
-control IDS(inout headers hdr,
+control MyEgress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-
-    action drop(){
-        mark_to_drop();
-    }
-    action unkown_ip() {
-        hdr.ids.layer = NET_LAYER;
-        hdr.ids.flag = UNKOWN;
-    }
-
-    action black_ip() {
-        hdr.ids.layer = NET_LAYER;
-        hdr.ids.flag = REJECT;
-        drop();
-    }
-
-    action white_ip() {
-        hdr.ids.layer = NET_LAYER; // network layer
-        hdr.ids.flag = ACCEPT; // accept action
-    }
-
-    table ip_address_ids {
-        key = {
-            hdr.ipv4.srcAddr: exact;
-        }
-        actions = {
-            black_ip;
-            white_ip;
-        }
-        size = 100;
-    }
-
-    action send_alert() {
-        standart_metadata.egress_spec = CON_PORT;
-        hdr.ids.flag = REJECT;
-        hdr.ids.layer
-    }
-
-    actions is_white() {
-        //!(flag == ACCEPT && layer == NET_LAYER)
-        if(hdr.ids.flag != ACCEPT || hdr.ids.layer != NET_LAYER) {
-            // illegal access
-            // send alert to the control plane to add the ip to black list
-            
-        }
-    }
-
-    action is_unkown() {
-        //!(flag == UNKOWN && layer == NET_LAYER)
-        if(hdr.ids.flag != UNKOWN || hdr.ids.layer != NET_LAYER) {
-            // illegal access
-            // send alert to the control plane to add the ip to black list
-        }
-    }    
-
-    table port_tcp_ids {
-        key = {
-            hdr.tcp.dstPort: exact;
-        }
-        actions = {
-            is_white;
-            is_unkown;
-        }
-    }
-
-    apply {
-        if(ip_adress_ids.apply().miss) {
-            // the ip is not in the black or white list
-            unkown_ip();
-        }
-    }
+    apply {  }
 }
 
 /*************************************************************************
@@ -408,8 +339,8 @@ control MyDeparser(packet_out packet, in headers hdr) {
 V1Switch(
 MyParser(),
 MyVerifyChecksum(),
-IDS(),
-Forward(),
+MyIngress(),
+MyEgress(),
 MyComputeChecksum(),
 MyDeparser()
 ) main;

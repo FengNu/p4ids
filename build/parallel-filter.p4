@@ -2,23 +2,38 @@
 #include <core.p4>
 #include <v1model.p4>
 
+#define INGRESS_PORT 1
+#define EGRESS_PORT 2
+
 const bit<16> TYPE_IPV4 = 0x0800;
 const bit<16> TYPE_ARP  = 0x0806;
+const bit<16> TYPE_IDS  = 0xFFFF;
 const bit<16> ARP_REQ = 0x0001;
 const bit<16> ARP_RES = 0x0002;
+const bit<9>  CON_PORT = 0x0;
 
+const bit<8> DIS_IPV4 = 3;
+const bit<8> DIS_TCP = 4;
+const bit<8> DIS_UDP = 5;
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
 
 typedef bit<9>  egressSpec_t;
-typedef bit<48> macAddr_t;
+typedef bit<16> port_t;
 typedef bit<32> ip4Addr_t;
+typedef bit<48> macAddr_t;
 
 header ethernet_t {
     macAddr_t dstAddr;
     macAddr_t srcAddr;
     bit<16>   etherType;
+}
+
+header distribute_t {
+    bit<32>  group;
+    bit<8>   type;
+    bit<64>  ruleIds;
 }
 
 header ipv4_t {
@@ -36,31 +51,45 @@ header ipv4_t {
     ip4Addr_t dstAddr;
 }
 
-header arp_t{
-    bit<16> hardwareType; // 0x0001 mac address
-    bit<16> protocolType; // 0x0800 ipv4
-    bit<8>  hardwaresize; // 0x06 mac address length
-    bit<8>  protocolSize; // 0x04 ipv4 address length
-    bit<16> opCode;       // arp request: 0x0001 arp reponse: 0x0002
-    macAddr_t senderMacAddr;
-    ip4Addr_t senderIpAddr;
-    macAddr_t targetMacAddr;
-    ip4Addr_t targetIpAddr;
+
+header tcp_t{
+    port_t srcPort;
+    port_t dstPort;
+    bit<32> seqNo;
+    bit<32> ackNo;
+    bit<4>  dataOffset;
+    bit<4>  res;
+    bit<1>  cwr;
+    bit<1>  ece;
+    bit<1>  urg;
+    bit<1>  ack;
+    bit<1>  psh;
+    bit<1>  rst;
+    bit<1>  syn;
+    bit<1>  fin;
+    bit<16> window;
+    bit<16> checksum;
+    bit<16> urgentPtr;
+}
+
+
+header udp_t {
+    port_t srcPort;
+    port_t dstPort;
+    bit<16> dataLen;
+    bit<16> checksum;
 }
 
 struct metadata {
-    /* empty */
-    bit<32> tmp;
+    bit<6> tcp_flag;
 }
 
 struct headers {
-    ethernet_t   ethernet;
-    ipv4_t       ipv4;
-    arp_t        arp;
-}
-
-struct tmp {
-    bit<32> a;
+    ethernet_t        ethernet;
+    distribute_t      dis;
+    ipv4_t            ipv4;
+    udp_t             udp;
+    tcp_t             tcp;
 }
 
 /*************************************************************************
@@ -78,22 +107,31 @@ parser MyParser(packet_in packet,
 
     state parse_ethernet {
         packet.extract(hdr.ethernet);
-        transition select(hdr.ethernet.etherType) {
-            TYPE_IPV4: parse_ipv4;
-            TYPE_ARP:  parse_arp;
-            default: accept;
+        packet.extract(hdr.dis);
+        transition select(hdr.dis.type) {
+            DIS_IPV4: parse_ipv4;
+            DIS_TCP: parse_tcp;
+            DIS_UDP: parse_udp;
+            default: reject;
         }
     }
     
-    state parse_arp {
-        packet.extract(hdr.arp);
-        transition accept;
-    }
     state parse_ipv4 {
         packet.extract(hdr.ipv4);
         transition accept;
     }
 
+    state parse_tcp {
+        packet.extract(hdr.tcp);
+        meta.tcp_flag = (bit<6>)hdr.tcp.urg << 5 | (bit<6>)hdr.tcp.ack << 4 | (bit<6>)hdr.tcp.psh << 3 | (bit<6>)hdr.tcp.rst << 2 | (bit<6>)hdr.tcp.syn << 1 | (bit<6>)hdr.tcp.fin;
+        transition accept;
+    }
+
+    state parse_udp {
+        packet.extract(hdr.udp);
+        transition accept;
+    }
+    
 }
 
 /*************************************************************************
@@ -109,125 +147,114 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 **************  I N G R E S S   P R O C E S S I N G   *******************
 *************************************************************************/
 
-control MyIngress(inout headers hdr,
+control ingress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
-    register<bit<112>>(1) reg;
-    action arp_response() {
-        ip4Addr_t temp;
-        // send back to the ingress port
-        standard_metadata.egress_spec = standard_metadata.ingress_port;
-        // set the opCode, set the dst mac, target mac swap target ip and sender ip
-        hdr.arp.opCode = ARP_RES;
 
-        hdr.ethernet.dstAddr = hdr.ethernet.srcAddr;
-
-        hdr.arp.targetMacAddr = hdr.arp.senderMacAddr;
-        temp = hdr.arp.targetIpAddr;
-        hdr.arp.targetIpAddr = hdr.arp.senderIpAddr;
-        hdr.arp.senderIpAddr = temp;
+    action forward() {
+        standard_metadata.egress_spec = EGRESS_PORT;
     }
 
-    action drop() {
-        mark_to_drop(standard_metadata);
-    }
-    
-    action ipv4_forward(bit<32> integer) {
-        meta.tmp = integer;
-        log_msg("value1 = {}", {integer});
+    action mark_rule_ids(bit<64> rule_ids) {
+        hdr.dis.ruleIds = rule_ids;
+        standard_metadata.egress_spec = EGRESS_PORT;
     }
 
-    action set_smac(macAddr_t portMacAddr) {
+    action set_mac(macAddr_t portMacAddr, macAddr_t dstMacAddr) {
         hdr.ethernet.srcAddr = portMacAddr;
-        if(hdr.ethernet.etherType == TYPE_ARP) {
-            hdr.arp.senderMacAddr = portMacAddr;
-        }
+        hdr.ethernet.dstAddr = dstMacAddr;
     }
 
-    // this table is used to check if the target Ip of the ARP request is the switch's port's ip
-    table arp_response_table {
+    table ipv4_filter {
         key = {
-            hdr.arp.targetIpAddr: exact;
-        }
-        actions = {
-            arp_response;
-            drop;
-            NoAction;
-        }
-        const entries = {
-            (0x0a000101) : arp_response();
-        }
-        default_action = drop();
-    }
-
-    // this table is used to forward ipv4 packet
-    table ipv4_lpm {
-        key = {
-            hdr.ipv4.dstAddr: ternary;
             hdr.ipv4.srcAddr: ternary;
+            hdr.ipv4.dstAddr: ternary;
             hdr.ipv4.protocol: ternary;
         }
+
         actions = {
-            ipv4_forward;
-            drop;
-            NoAction;
+            mark_rule_ids;
+            forward;
         }
+
         size = 1024;
-        default_action = drop();
+        default_action = forward;
+    }
+
+    table tcp_filter {
+        key = {
+            hdr.tcp.srcPort: range;
+            hdr.tcp.dstPort: range;
+            meta.tcp_flag: ternary;
+        }
+
+        actions = {
+            mark_rule_ids;
+            forward;
+        }
+
+        size = 1024;
+        default_action = forward;
+    }
+
+    table udp_filter {
+        key = {
+            hdr.udp.srcPort: range;
+            hdr.udp.dstPort: range;
+        }
+
+        actions = {
+            mark_rule_ids;
+            forward;
+        }
+
+        size = 1024;
+        default_action = forward;
     }
 
     // The table to store every port's mac of this switch. It is used to set the source mac the packet
     table port_mac {
 
         key = {
+            standard_metadata.ingress_port: exact;
             standard_metadata.egress_spec: exact;
         }
 
         actions = {
-            set_smac;
-            drop;
+            set_mac;
             NoAction;
         }
-
-        default_action = drop();
-        const entries = {
-            (1) : set_smac(0x000c29908cf6);
-            (2) : set_smac(0x000c29908c00);
-            (3) : set_smac(0x000c29908c0a);
-        }
-
-
+        size = 1024;
+        default_action = NoAction;
     }
+
     apply {
-        bit<10000> test = 1;
-        test = test<<256;
-        log_msg("value_test={}",{test});
-        test = test<<41;
-        log_msg("value_test={}",{test});
-        if(hdr.ethernet.etherType == TYPE_ARP) {
-            if(hdr.arp.isValid()) {
-                if(hdr.arp.opCode == ARP_REQ) {
-                    arp_response_table.apply();
-                    port_mac.apply();
-                }
-            }
-        }else if (hdr.ethernet.etherType == TYPE_IPV4) {
-            if(hdr.ipv4.isValid()){
-                ipv4_lpm.apply();
-
-            }
+        if(hdr.dis.type == DIS_IPV4) {
+            ipv4_filter.apply();
+        } else if (hdr.dis.type == DIS_TCP) {
+            tcp_filter.apply();
+        } else if(hdr.dis.type == DIS_UDP) {
+            udp_filter.apply();
+        } else if(hdr.dis.type == DIS_APP) {
+            
         }
+        port_mac.apply();
     }
+
 }
 
 /*************************************************************************
 ****************  E G R E S S   P R O C E S S I N G   *******************
 *************************************************************************/
 
-control MyEgress(inout headers hdr,
+control egress(inout headers hdr,
                  inout metadata meta,
                  inout standard_metadata_t standard_metadata) {
-    apply {  }
+
+
+    apply {
+
+    }
 }
 
 /*************************************************************************
@@ -235,23 +262,7 @@ control MyEgress(inout headers hdr,
 *************************************************************************/
 
 control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
-     apply {
-	update_checksum(
-	    hdr.ipv4.isValid(),
-            { hdr.ipv4.version,
-	      hdr.ipv4.ihl,
-              hdr.ipv4.diffserv,
-              hdr.ipv4.totalLen,
-              hdr.ipv4.identification,
-              hdr.ipv4.flags,
-              hdr.ipv4.fragOffset,
-              hdr.ipv4.ttl,
-              hdr.ipv4.protocol,
-              hdr.ipv4.srcAddr,
-              hdr.ipv4.dstAddr },
-            hdr.ipv4.hdrChecksum,
-            HashAlgorithm.csum16);
-    }
+     apply { }
 }
 
 /*************************************************************************
@@ -261,8 +272,9 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
-        packet.emit(hdr.arp);
+        packet.emit(hdr.dis);
         packet.emit(hdr.ipv4);
+        packet.emit(hdr.ipv4options);
     }
 }
 
@@ -273,8 +285,8 @@ control MyDeparser(packet_out packet, in headers hdr) {
 V1Switch(
 MyParser(),
 MyVerifyChecksum(),
-MyIngress(),
-MyEgress(),
+ingress(),
+egress(),
 MyComputeChecksum(),
 MyDeparser()
 ) main;
