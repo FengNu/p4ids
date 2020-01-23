@@ -3,8 +3,15 @@
 #include <v1model.p4>
 #define MAX_PORT_NUM 10
 
+const bit<8> WRONG_DST = 0x01;
+const bit<8> LOOP = 0x02;
+const bit<8> BLACK_HOLE = 0x03;
+
+const bit<9>  ADMIN_PORT = 0x0;
 const bit<16> TYPE_IPV4 = 0x0800;
 const bit<16> TYPE_ARP  = 0x0806;
+const bit<16> TYPE_TRACE = 0x9999;
+
 const bit<16> ARP_REQ = 0x0001;
 const bit<16> ARP_RES = 0x0002;
 
@@ -21,6 +28,20 @@ header ethernet_t {
     macAddr_t srcAddr;
     bit<16>   etherType;
 }
+
+header alert_t {
+    bit<8> type;
+    bit<8> switch_id;
+}
+
+header trace_header_t {
+    bit<8>  length;
+}
+
+header trace_elastic_t {
+    varbit<16>  elastic;
+}
+
 
 header ipv4_t {
     bit<4>    version;
@@ -76,25 +97,20 @@ header udp_t {
     bit<16> checksum;
 }
 
-header trace_header_t {
-    bit<8>  length;
-    varbit<64> elastic;
-}
-
 struct metadata {
-    /* empty */
+    bit<8> switch_id_key;
+    bit<8> switch_id;
 }
 
 struct headers {
     ethernet_t   ethernet;
+    alert_t      alert;
+    trace_header_t trace;
+    trace_elastic_t elastic;
     ipv4_t       ipv4;
     arp_t        arp;
     udp_t        udp;
     tcp_t        tcp;
-}
-
-struct tmp {
-    bit<32> a;
 }
 
 /*************************************************************************
@@ -115,8 +131,15 @@ parser MyParser(packet_in packet,
         transition select(hdr.ethernet.etherType) {
             TYPE_IPV4: parse_ipv4;
             TYPE_ARP:  parse_arp;
+            TYPE_TRACE: parse_trace;
             default: accept;
         }
+    }
+
+    state parse_trace {
+        packet.extract(hdr.trace);
+        packet.extract(hdr.elastic, (bit<32>)hdr.trace.length);
+        transition parse_ipv4;
     }
     
     state parse_arp {
@@ -151,9 +174,6 @@ parser MyParser(packet_in packet,
         transition accept;
     }
 
-    state parse_trace_header {
-        
-    }
 }
 
 /*************************************************************************
@@ -190,6 +210,11 @@ control MyIngress(inout headers hdr,
     }
 
     action arp_response() {
+        // update the host_table
+        bit<80> host_info;
+        set_host_info(host_info);
+        host_table.write((bit<32>)standard_metadata.ingress_port, host_info);
+
         ip4Addr_t temp;
         // send back to the ingress port
         standard_metadata.egress_spec = standard_metadata.ingress_port;
@@ -203,17 +228,16 @@ control MyIngress(inout headers hdr,
         hdr.arp.targetIpAddr = hdr.arp.senderIpAddr;
         hdr.arp.senderIpAddr = temp;
 
-        // update the host_table
-        
     }
 
     action drop() {
         mark_to_drop(standard_metadata);
     }
     
-    action ipv4_forward(bit<32> integer) {
-        meta.tmp = integer;
-        log_msg("value1 = {}", {integer});
+    action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
+        standard_metadata.egress_spec = port;
+        hdr.ethernet.dstAddr = dstAddr;
+        hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
 
     action set_smac(macAddr_t portMacAddr) {
@@ -233,18 +257,14 @@ control MyIngress(inout headers hdr,
             drop;
             NoAction;
         }
-        const entries = {
-            (0x0a000101) : arp_response();
-        }
+        size = 1024;
         default_action = drop();
     }
 
     // this table is used to forward ipv4 packet
     table ipv4_lpm {
         key = {
-            hdr.ipv4.dstAddr: ternary;
-            hdr.ipv4.srcAddr: ternary;
-            hdr.ipv4.protocol: ternary;
+            hdr.ipv4.dstAddr: lpm;// if the host is directly connected with the switch host' ip/32 and the mac is the host'mac if the host isn't directly connected with the switch: network/mask and the mac is the next switch's port's mac
         }
         actions = {
             ipv4_forward;
@@ -269,33 +289,68 @@ control MyIngress(inout headers hdr,
         }
 
         default_action = drop();
-        const entries = {
-            (1) : set_smac(0x000c29908cf6);
-            (2) : set_smac(0x000c29908c00);
-            (3) : set_smac(0x000c29908c0a);
-        }
-
-
+        size = 1024;
     }
+
+    action set_switch_id(bit<8> switch_id) {
+        meta.switch_id = switch_id;
+    }
+
+    table switch_id_table {
+        key = {
+            meta.switch_id_key: exact;
+        }
+        
+        actions = {
+            set_switch_id;
+            NoAction;
+        }
+        default_action = NoAction;
+        size = 2;
+    }
+
+    action send_alert(in bit<8> alert_type) {
+        // send the packet to administrator
+        standard_metadata.egress_spec = ADMIN_PORT;
+        // add new packet header
+        hdr.alert.setValid();
+        hdr.alert.type = alert_type;
+        hdr.alert.switch_id = meta.switch_id;
+    }
+
     apply {
-        bit<10000> test = 1;
-        test = test<<256;
-        log_msg("value_test={}",{test});
-        test = test<<41;
-        log_msg("value_test={}",{test});
-        if(hdr.ethernet.etherType == TYPE_ARP) {
-            if(hdr.arp.isValid()) {
-                if(hdr.arp.opCode == ARP_REQ) {
-                    arp_response_table.apply();
+        // mark route path
+        switch_id_table.apply();  
+        bit<hdr.trace.length> trace_tmp = 1 << meta.switch_id;
+        if(trace_tmp && hdr.elastic.elastic == 1) {
+            send_alert(LOOP);
+        } else {
+            hdr.elastic.elastic = hdr.elastic.elastic | trace_tmp;
+            if(hdr.ethernet.etherType == TYPE_ARP) {
+                if(hdr.arp.isValid()) {
+                    if(hdr.arp.opCode == ARP_REQ) {
+                        arp_response_table.apply();
+                        port_mac.apply();
+                    }
+                }
+            }else if (hdr.ethernet.etherType == TYPE_IPV4) {
+                if(hdr.ipv4.isValid()){
+                    ipv4_lpm.apply();
                     port_mac.apply();
+
+                    //check egress_spec
+                    bit<80> host_info_tmp;
+                    host_table.read(host_info_tmp, (bit<32>)standard_metadata.egress_port);
+                    macAddr_t mac;
+                    ip4Addr_t ip;
+                    get_host_info(host_info_tmp, mac, ip);
+                    if(hdr.ethernet.dstAddr != mac || hdr.ipv4.dstAddr != ip) {
+                        send_alert(WRONG_DST);
+                    }
                 }
             }
-        }else if (hdr.ethernet.etherType == TYPE_IPV4) {
-            if(hdr.ipv4.isValid()){
-                ipv4_lpm.apply();
-
-            }
         }
+
     }
 }
 
