@@ -1044,6 +1044,7 @@ control MyIngress(inout headers hdr,
     }
 
     action arp_response() {
+        log_msg("arp_response");
         // update the host_table
         bit<80> host_info = 0;
         set_host_info(host_info);
@@ -1061,7 +1062,6 @@ control MyIngress(inout headers hdr,
         temp = hdr.arp.targetIpAddr;
         hdr.arp.targetIpAddr = hdr.arp.senderIpAddr;
         hdr.arp.senderIpAddr = temp;
-
     }
 
     action drop() {
@@ -1092,6 +1092,9 @@ control MyIngress(inout headers hdr,
             NoAction;
         }
         size = 1024;
+        const entries = {
+            (0x0a000002) : arp_response();
+        }
         default_action = drop();
     }
 
@@ -1106,6 +1109,12 @@ control MyIngress(inout headers hdr,
             drop;
             NoAction;
         }
+
+        const entries = {
+            (0x0a000001, 0x0a000101) : ipv4_forward(0x000c29bdb32e, 2);
+            (0x0a000101, 0x0a000001) : ipv4_forward(0x005079666801, 1);
+        }
+
         size = 1024;
         default_action = drop();
     }
@@ -1121,6 +1130,12 @@ control MyIngress(inout headers hdr,
             set_smac;
             drop;
             NoAction;
+        }
+
+        const entries = {
+            (0) : set_smac(0x000c29684c2a);
+            (1) : set_smac(0x000c29684c34);
+            (2) : set_smac(0x000c29684c3e);
         }
 
         default_action = drop();
@@ -1141,6 +1156,10 @@ control MyIngress(inout headers hdr,
             NoAction;
         }
         default_action = NoAction;
+        const entries = {
+            (0) : set_switch_id(1);
+        }
+
         size = 2;
     }
 
@@ -1159,39 +1178,72 @@ control MyIngress(inout headers hdr,
         switch_id_table.apply(); // get switch id
         bit<16> trace_tmp = 1 << (meta.switch_id - 1);
 
-        if(trace_tmp & hdr.elastic.elastic == 1) {
-            // process the packet before
-            send_alert(LOOP);
-        } else {
-            // no loop
-            hdr.elastic.elastic = hdr.elastic.elastic | trace_tmp; // record on the header
-
-            if(hdr.ethernet.etherType == TYPE_ARP) {
-                if(hdr.arp.isValid()) {
-                    if(hdr.arp.opCode == ARP_REQ) {
-                        arp_response_table.apply(); // check if is the switch's ip
-                    }
+        if (hdr.ethernet.etherType == TYPE_ARP) {
+            if(hdr.arp.isValid()) {
+                if(hdr.arp.opCode == ARP_REQ) {
+                    arp_response_table.apply(); // check if is the switch's ip
                 }
+            }
+        } else if (hdr.ethernet.etherType == TYPE_IPV4 || hdr.ethernet.etherType == TYPE_TRACE || hdr.ethernet.etherType == TYPE_PROBE) {
+            // switch in the internal network
+            if (ipv4_exact.apply().miss) {
+                send_alert(BLACK_HOLE);
+            } else {
 
-            }else if (hdr.ethernet.etherType == TYPE_IPV4) {
-                if(hdr.ipv4.isValid()){
-                    if(ipv4_exact.apply().miss) {
-                        send_alert(BLACK_HOLE);
-                    }
+                if (hdr.ethernet.etherType == TYPE_PROBE) {
 
+                } else if (hdr.ethernet.etherType == TYPE_IPV4) {
+                    log_msg("hdr.ethernet.etherType == TYPE_IPV4");
                     //check egress_spec
                     bit<80> host_info_tmp = 0;
-                    host_table.read(host_info_tmp, (bit<32>)standard_metadata.egress_port);
+                    host_table.read(host_info_tmp, (bit<32>)standard_metadata.egress_spec);
+                    log_msg("host_table.read(host_info_tmp, {})",{standard_metadata.egress_spec});
                     macAddr_t mac = 0;
                     ip4Addr_t ip = 0;
                     get_host_info(host_info_tmp, mac, ip);
-                    if(hdr.ethernet.dstAddr != mac || hdr.ipv4.dstAddr != ip) {
+                    if(mac == 0 && ip == 0) {
+                        log_msg("forward packet add trace header");
+                        // forward packet add trace header
+                        hdr.ethernet.etherType = TYPE_TRACE;
+                        hdr.elastic.setValid();
+                        hdr.elastic.elastic = hdr.elastic.elastic | trace_tmp;
+
+                    } else if (hdr.ethernet.dstAddr != mac || hdr.ipv4.dstAddr != ip) {
                         send_alert(WRONG_DST);
+                    }
+
+                } else if (hdr.ethernet.etherType == TYPE_TRACE) {
+                    log_msg("hdr.ethernet.etherType == TYPE_TRACE");
+                    if (trace_tmp & hdr.elastic.elastic == 1) {
+                        send_alert(LOOP);
+                    } else {
+                        // continue
+                        bit<80> host_info_tmp2 = 0;
+                        host_table.read(host_info_tmp2, (bit<32>)standard_metadata.egress_spec);
+                        macAddr_t mac2 = 0;
+                        ip4Addr_t ip2 = 0;
+                        get_host_info(host_info_tmp2, mac2, ip2);
+                        if(mac2 == 0 && ip2 == 0) {
+                            // continue forwarding
+                            log_msg("continue forwarding");
+                            hdr.elastic.elastic = hdr.elastic.elastic | trace_tmp;
+                        } else {
+                            // to the end
+                            log_msg("to the end");
+                            hdr.elastic.setInvalid();
+                            hdr.ethernet.etherType = TYPE_IPV4;
+                            if (hdr.ethernet.dstAddr != mac2 || hdr.ipv4.dstAddr != ip2) {
+                                log_msg("wrong destination");
+                                log_msg("hdr.ethernet.dstAddr:{} != mac2:{} || hdr.ipv4.dstAddr:{} != ip2:{}",{hdr.ethernet.dstAddr, mac2, hdr.ipv4.dstAddr, ip2});
+                                // wrong destination
+                                send_alert(WRONG_DST);
+                            }
+                        }
                     }
                 }
             }
-            port_mac.apply(); // set src mac, one table can only by applied once in ingress process
         }
+        port_mac.apply();
 
     } // apply
 }
