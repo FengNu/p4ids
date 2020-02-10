@@ -828,6 +828,7 @@ const bit<16> TYPE_IPV4 = 0x0800;
 const bit<16> TYPE_ARP = 0x0806;
 const bit<16> TYPE_TRACE = 0x9999;
 const bit<16> TYPE_PROBE = 0x9998;
+const bit<16> TYPE_ALERT = 0x9997;
 
 // ip's type
 const bit<8> TYPE_TCP = 0x06;
@@ -853,21 +854,26 @@ header ethernet_t {
     bit<16> etherType;
 }
 
-header record_t {
+header recorder_t {
     bit<1> bos;
     bit<7> switch_id;
     bit<8> flow_id;
 }
 
+header record_t {
+    bit<16> next_header;
+}
+
 header alert_t {
     bit<8> type;
     bit<8> switch_id;
+    bit<16> next_header;
 }
 
 header trace_elastic_t {
     bit<16> elastic;
+    bit<16> next_header;
 }
-
 
 header ipv4_t {
     bit<4> version;
@@ -925,13 +931,16 @@ header udp_t {
 
 struct metadata {
     bit<8> switch_id_key;
-    bit<8> switch_id;
+    bit<7> switch_id;
+    bit<8> flow_id;
+    bit<32> next_index;
 }
 
 struct headers {
     ethernet_t ethernet;
-    record_t[10] records;
     alert_t alert;
+    recorder_t[10] records;
+    record_t record;
     trace_elastic_t elastic;
     arp_t arp;
     ipv4_t ipv4;
@@ -954,6 +963,7 @@ parser MyParser(packet_in packet,
 
     state parse_ethernet {
         packet.extract(hdr.ethernet);
+        meta.next_index = 0;
         transition select(hdr.ethernet.etherType) {
             TYPE_IPV4: parse_ipv4;
             TYPE_ARP: parse_arp;
@@ -964,12 +974,29 @@ parser MyParser(packet_in packet,
     }
 
     state parse_probe {
-        transition accept;
+        packet.extract(hdr.records.next);
+        meta.next_index = meta.next_index + 1;
+        transition select(hdr.records.last.bos) {
+            1: parse_probe;
+            default: parse_probe_next_header;
+        }
+    }
+
+    state parse_probe_next_header {
+        packet.extract(hdr.record);
+        transition select(hdr.record.next_header) {
+            TYPE_IPV4: parse_ipv4;
+            TYPE_TRACE: parse_trace;
+            default: accept;
+        }
     }
 
     state parse_trace {
         packet.extract(hdr.elastic); // fill the elastic domain
-        transition parse_ipv4;
+        transition select(hdr.elastic.next_header) {
+            TYPE_IPV4: parse_ipv4;
+            default: accept;
+        }
     }
 
     state parse_arp {
@@ -1028,6 +1055,15 @@ control MyIngress(inout headers hdr,
                   inout standard_metadata_t standard_metadata) {
     register<bit<80>>(10) host_table;
 
+    action add_new_record() {
+        hdr.records[meta.next_index - 1].bos = 1;
+
+        hdr.records[meta.next_index].setValid();
+        hdr.records[meta.next_index].bos = 0;
+        hdr.records[meta.next_index].switch_id = meta.switch_id;
+        hdr.records[meta.next_index].flow_id = meta.flow_id;
+    }
+
     action set_host_info(inout bit<80> host_info) {
         host_info = 0;
         host_info = host_info | (((bit<80>)hdr.arp.senderMacAddr) << 32);
@@ -1068,10 +1104,12 @@ control MyIngress(inout headers hdr,
         mark_to_drop(standard_metadata);
     }
 
-    action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
+    action ipv4_forward(macAddr_t dstAddr, egressSpec_t port, bit<8> flow_id) {
         standard_metadata.egress_spec = port;
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+        meta.flow_id = flow_id;
+        add_new_record();
     }
 
     action set_smac(macAddr_t portMacAddr) {
@@ -1111,8 +1149,8 @@ control MyIngress(inout headers hdr,
         }
 
         const entries = {
-            (0x0a000001, 0x0a000101) : ipv4_forward(0x000c29bdb32e, 2);
-            (0x0a000101, 0x0a000001) : ipv4_forward(0x005079666801, 1);
+            (0x0a000001, 0x0a000101) : ipv4_forward(0x000c29bdb32e, 2, 0);
+            (0x0a000101, 0x0a000001) : ipv4_forward(0x005079666801, 1, 1);
         }
 
         size = 1024;
@@ -1142,7 +1180,7 @@ control MyIngress(inout headers hdr,
         size = 1024;
     }
 
-    action set_switch_id(bit<8> switch_id) {
+    action set_switch_id(bit<7> switch_id) {
         meta.switch_id = switch_id;
     }
 
@@ -1169,7 +1207,24 @@ control MyIngress(inout headers hdr,
         // add new packet header
         hdr.alert.setValid();
         hdr.alert.type = alert_type;
-        hdr.alert.switch_id = meta.switch_id;
+        hdr.alert.switch_id = (bit<8>)meta.switch_id;
+        hdr.alert.next_header = hdr.ethernet.etherType;
+        hdr.ethernet.etherType = TYPE_ALERT;
+        add_new_record();
+        hdr.records.pop_front(1);
+    }
+
+    action add_trace_header(in bit<16> trace_value) {
+        hdr.elastic.setValid();
+        hdr.elastic.elastic = hdr.elastic.elastic | trace_value;
+        hdr.elastic.next_header = TYPE_IPV4;
+
+        // set last header's next protocal
+        if(hdr.ethernet.etherType == TYPE_PROBE) {
+            hdr.record.next_header = TYPE_TRACE;
+        } else {
+            hdr.ethernet.etherType = TYPE_TRACE;
+        }
     }
 
     apply {
@@ -1189,58 +1244,42 @@ control MyIngress(inout headers hdr,
             if (ipv4_exact.apply().miss) {
                 send_alert(BLACK_HOLE);
             } else {
+                // check if next is the end
+                bit<80> host_info_tmp = 0;
+                host_table.read(host_info_tmp, (bit<32>)standard_metadata.egress_spec);
+                log_msg("host_table.read(host_info_tmp, {})",{standard_metadata.egress_spec});
+                macAddr_t mac = 0;
+                ip4Addr_t ip = 0;
+                get_host_info(host_info_tmp, mac, ip);
 
-                if (hdr.ethernet.etherType == TYPE_PROBE) {
-
-                } else if (hdr.ethernet.etherType == TYPE_IPV4) {
-                    log_msg("hdr.ethernet.etherType == TYPE_IPV4");
-                    //check egress_spec
-                    bit<80> host_info_tmp = 0;
-                    host_table.read(host_info_tmp, (bit<32>)standard_metadata.egress_spec);
-                    log_msg("host_table.read(host_info_tmp, {})",{standard_metadata.egress_spec});
-                    macAddr_t mac = 0;
-                    ip4Addr_t ip = 0;
-                    get_host_info(host_info_tmp, mac, ip);
-                    if(mac == 0 && ip == 0) {
-                        log_msg("forward packet add trace header");
-                        // forward packet add trace header
-                        hdr.ethernet.etherType = TYPE_TRACE;
-                        hdr.elastic.setValid();
-                        hdr.elastic.elastic = hdr.elastic.elastic | trace_tmp;
-
-                    } else if (hdr.ethernet.dstAddr != mac || hdr.ipv4.dstAddr != ip) {
-                        send_alert(WRONG_DST);
-                    }
-
-                } else if (hdr.ethernet.etherType == TYPE_TRACE) {
-                    log_msg("hdr.ethernet.etherType == TYPE_TRACE");
-                    if (trace_tmp & hdr.elastic.elastic == 1) {
-                        send_alert(LOOP);
-                    } else {
-                        // continue
-                        bit<80> host_info_tmp2 = 0;
-                        host_table.read(host_info_tmp2, (bit<32>)standard_metadata.egress_spec);
-                        macAddr_t mac2 = 0;
-                        ip4Addr_t ip2 = 0;
-                        get_host_info(host_info_tmp2, mac2, ip2);
-                        if(mac2 == 0 && ip2 == 0) {
-                            // continue forwarding
-                            log_msg("continue forwarding");
-                            hdr.elastic.elastic = hdr.elastic.elastic | trace_tmp;
+                if (mac == 0 && ip == 0) {
+                    // not to the end
+                    if(hdr.elastic.isValid()) {
+                        // trace header valid
+                        if (trace_tmp & hdr.elastic.elastic == 1) {
+                            send_alert(LOOP);
                         } else {
-                            // to the end
-                            log_msg("to the end");
+                            hdr.elastic.elastic = hdr.elastic.elastic | trace_tmp;
+                        }
+                    } else {
+                        // trace header not valid
+                        add_trace_header(trace_tmp);
+                    }
+                } else {
+                    // to the end
+                    if (hdr.ethernet.dstAddr != mac || hdr.ipv4.dstAddr != ip) {
+                        log_msg("wrong destination");
+                        // wrong destination
+                        send_alert(WRONG_DST);
+                    } else {
+                        log_msg("to the end");
+                        if(hdr.elastic.isValid()) {
                             hdr.elastic.setInvalid();
                             hdr.ethernet.etherType = TYPE_IPV4;
-                            if (hdr.ethernet.dstAddr != mac2 || hdr.ipv4.dstAddr != ip2) {
-                                log_msg("wrong destination");
-                                log_msg("hdr.ethernet.dstAddr:{} != mac2:{} || hdr.ipv4.dstAddr:{} != ip2:{}",{hdr.ethernet.dstAddr, mac2, hdr.ipv4.dstAddr, ip2});
-                                // wrong destination
-                                send_alert(WRONG_DST);
-                            }
                         }
                     }
                 }
+
             }
         }
         port_mac.apply();
@@ -1285,12 +1324,12 @@ control MyComputeChecksum(inout headers hdr, inout metadata meta) {
 /*************************************************************************
 ***********************  D E P A R S E R  *******************************
 *************************************************************************/
-
 control MyDeparser(packet_out packet, in headers hdr) {
     apply {
         packet.emit(hdr.ethernet);
-        packet.emit(hdr.records);
         packet.emit(hdr.alert);
+        packet.emit(hdr.records);
+        packet.emit(hdr.record);
         packet.emit(hdr.elastic);
         packet.emit(hdr.arp);
         packet.emit(hdr.ipv4);
