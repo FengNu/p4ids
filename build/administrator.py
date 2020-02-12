@@ -9,6 +9,11 @@ from scapy.all import IP, TCP, UDP, Raw
 from scapy.layers.inet import _IPOption_HDR
 from alert_header import Alert
 
+TYPE_TRACE = 0x9999
+TYPE_ALERT = 0x9997
+TYPE_PROBE = 0x9998
+TYPE_IPV4 = 0x0800
+
 def get_if():
     ifs=get_if_list()
     iface=None
@@ -17,28 +22,23 @@ def get_if():
             iface=i
             break;
     if not iface:
-        print "Cannot find eth0 interface"
         exit(1)
     return iface
-def send_probe_packet(pkt):
     
 
 def handle_pkt(pkt):
     if Alert in pkt:
-        print "got a packet"
-        pkt.show2()
-#        hexdump(pkt)
-#        print "len(pkt) = ", len(pkt)
-        sys.stdout.flush()
-        pkt.
-
+        print ("got a packet")
+        pkt.show()
+        if pkt['Alert'].next_header == TYPE_IPV4:
+            # send probe packet
+            print(pkt['IP'])
+        elif pkt['Alert'].next_header == TYPE_TRACE:
+            print("trace")
 
 def main():
-    ifaces = filter(lambda i: 'ens' in i, os.listdir('/sys/class/net/'))
-    iface = ifaces[0]
-    print "sniffing on %s" % iface
     sys.stdout.flush()
-    sniff(iface = iface,
+    sniff(iface = "ens33",
           prn = lambda x: handle_pkt(x))
 
 if __name__ == '__main__':
